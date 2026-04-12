@@ -1,0 +1,32 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Local runtime state
+$status
+export_macro_*.emz3
+
+# Packaged app outputs
+SoloBow.exe
+SoloBowV*.spec
+build/
+
+# Launcher build outputs
+launcher/node_modules/
+launcher/dist/
+launcher/release/
+launcher/build_backend/
+launcher/artifacts/backend/
+
+# Keep build notes in the repo
+!launcher/artifacts/README.md

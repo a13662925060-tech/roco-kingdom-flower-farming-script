@@ -1,0 +1,64 @@
+{
+  "name": "solobow-launcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Small desktop launcher for SoloBow macro script",
+  "main": "dist/main.js",
+  "scripts": {
+    "build:main": "tsc --project tsconfig.json",
+    "build:renderer": "esbuild src/renderer.tsx --bundle --platform=browser --format=iife --outfile=dist/renderer.js",
+    "build:backend": "pyinstaller SoloBowBackend.spec --distpath artifacts/backend --workpath build_backend --noconfirm",
+    "build": "npm run build:main && npm run build:renderer",
+    "start": "npm run build && node start-electron.cjs",
+    "package:portable": "npm run build && npm run build:backend && electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.solobow.desktop",
+    "productName": "SoloBow",
+    "artifactName": "${productName}.exe",
+    "asar": true,
+    "compression": "maximum",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "index.html",
+      "styles.css",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "artifacts/backend/SoloBowBackend.exe",
+        "to": "backend/SoloBowBackend.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.11",
+    "typescript": "^6.0.2"
+  }
+}
