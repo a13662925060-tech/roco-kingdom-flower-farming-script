@@ -43,6 +43,8 @@ type ActionResult = {
   state: LauncherState;
 };
 
+type PendingAction = "start" | "stop" | null;
+
 declare global {
   interface Window {
     launcherApi: {
@@ -141,12 +143,47 @@ function getStartLabel(state: LauncherState, isStarting: boolean): string {
   return "启动脚本";
 }
 
+function getButtonLabel(state: LauncherState, pendingAction: PendingAction): string {
+  if (pendingAction === "stop") {
+    return "关闭中...";
+  }
+  if (pendingAction === "start") {
+    return "启动中...";
+  }
+  return getStartLabel(state, false);
+}
+
+function makeOptimisticState(state: LauncherState, pendingAction: PendingAction): LauncherState {
+  if (pendingAction === "start") {
+    return {
+      ...state,
+      running: false,
+      phase: "launching",
+      status: "启动中",
+      cycle: 0,
+      updatedAt: Date.now(),
+    };
+  }
+
+  if (pendingAction === "stop") {
+    return {
+      ...state,
+      running: false,
+      phase: "stopping",
+      status: "退出中",
+      updatedAt: Date.now(),
+    };
+  }
+
+  return state;
+}
+
 function App(): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<Snapshot>(emptySnapshot);
-  const [isStarting, setIsStarting] = useState(false);
-  const deferredSnapshot = useDeferredValue(snapshot);
-  const state = deferredSnapshot.state;
-  const logs = deferredSnapshot.logs
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const deferredLogs = useDeferredValue(snapshot.logs);
+  const state = snapshot.state;
+  const logs = deferredLogs
     .filter((entry) => !hiddenLogFragments.some((text) => entry.message.includes(text)))
     .slice(0, 20);
   const statusHeadline = getStatusHeadline(state);
@@ -174,23 +211,32 @@ function App(): React.JSX.Element {
   }, []);
 
   async function handleStart(): Promise<void> {
-    if (isStarting || state.launchKind === "missing") {
+    if (pendingAction || state.launchKind === "missing") {
       return;
     }
 
-    setIsStarting(true);
+    const action: PendingAction = backendActive ? "stop" : "start";
+    setPendingAction(action);
+    setSnapshot((current) => ({
+      ...current,
+      state: makeOptimisticState(current.state, action),
+    }));
+
     try {
+      let result: ActionResult;
       if (backendActive) {
-        await window.launcherApi.stop();
+        result = await window.launcherApi.stop();
       } else {
-        await window.launcherApi.start();
+        result = await window.launcherApi.start();
       }
+      setSnapshot((current) => ({
+        ...current,
+        state: result.state,
+      }));
       const nextSnapshot = await window.launcherApi.refreshNow();
-      startTransition(() => {
-        setSnapshot(nextSnapshot);
-      });
+      setSnapshot(nextSnapshot);
     } finally {
-      setIsStarting(false);
+      setPendingAction(null);
     }
   }
 
@@ -231,13 +277,13 @@ function App(): React.JSX.Element {
           <div className="button-wrap">
             <button
               className="start-button"
-              disabled={isStarting || state.launchKind === "missing"}
+              disabled={pendingAction !== null || state.launchKind === "missing"}
               onClick={() => {
                 void handleStart();
               }}
               type="button"
             >
-              {getStartLabel(state, isStarting)}
+              {getButtonLabel(state, pendingAction)}
             </button>
           </div>
         </article>

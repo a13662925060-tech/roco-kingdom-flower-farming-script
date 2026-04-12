@@ -13,6 +13,10 @@ const runtimeDirName = "LuokeMacroHotkey";
 const runtimeStatusFileName = "launcher_status.json";
 const runtimeCommandFileName = "launcher_command.json";
 const snapshotPollMs = 700;
+const runtimeExitPollMs = 60;
+const gracefulStopTimeoutMs = 450;
+const forcedStopTimeoutMs = 1200;
+const processExitPollMs = 60;
 
 const defaultHint =
   "先用鼠标选中需要运行脚本的窗口，再按 F8 开始或暂停；按 F9 退出整个脚本。";
@@ -88,6 +92,7 @@ let mainWindow: BrowserWindow | null = null;
 let pollTimer: NodeJS.Timeout | null = null;
 let logSequence = 1;
 let lastBroadcastSignature = "";
+let isWindowClosing = false;
 const launcherSessionStartedAtMs = Date.now();
 
 const logs: LogEntry[] = [];
@@ -288,6 +293,15 @@ function getRuntimePid(runtime: RuntimeStatusPayload | null): number | null {
   return typeof runtime?.pid === "number" ? runtime.pid : null;
 }
 
+function isRuntimeReady(runtime: RuntimeStatusPayload | null): boolean {
+  const pid = getRuntimePid(runtime);
+  if (!pid || !isPidAlive(pid)) {
+    return false;
+  }
+
+  return (runtime?.phase ?? "") !== "elevating";
+}
+
 function getStopCandidatePids(runtime: RuntimeStatusPayload | null): number[] {
   const candidates = [getRuntimePid(runtime), state.pid].filter(
     (pid): pid is number => typeof pid === "number" && pid > 0
@@ -295,35 +309,96 @@ function getStopCandidatePids(runtime: RuntimeStatusPayload | null): number[] {
   return [...new Set(candidates)];
 }
 
+async function discoverBackendPids(target: LaunchTarget): Promise<number[]> {
+  if (target.kind === "missing") {
+    return [];
+  }
+
+  const script = `
+$targetPath = ${JSON.stringify(target.targetPath)};
+$kind = ${JSON.stringify(target.kind)};
+if ($kind -eq 'exe') {
+  Get-CimInstance Win32_Process -Filter "Name = 'SoloBowBackend.exe'" |
+    Select-Object -ExpandProperty ProcessId
+} else {
+  Get-CimInstance Win32_Process |
+    Where-Object {
+      $_.Name -in @('python.exe', 'pythonw.exe', 'py.exe') -and
+      $_.CommandLine -and
+      $_.CommandLine.Contains($targetPath)
+    } |
+    Select-Object -ExpandProperty ProcessId
+}
+`.trim();
+
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { cwd: getWorkingDirectory(), windowsHide: true }
+    );
+
+    return [...new Set(
+      stdout
+        .split(/\r?\n/)
+        .map((line) => Number.parseInt(line.trim(), 10))
+        .filter((pid): pid is number => Number.isFinite(pid) && pid > 0)
+    )];
+  } catch {
+    return [];
+  }
+}
+
 async function waitForRuntimeReady(timeoutMs: number): Promise<RuntimeStatusPayload | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const runtime = readRuntimePayload();
-    if (runtime && getRuntimePid(runtime)) {
+    if (isRuntimeReady(runtime)) {
       return runtime;
     }
     await sleep(220);
   }
-  return readRuntimePayload();
+  const runtime = readRuntimePayload();
+  return isRuntimeReady(runtime) ? runtime : null;
 }
 
-async function waitForRuntimeExit(timeoutMs: number): Promise<boolean> {
+async function waitForRuntimeExit(timeoutMs: number, candidatePids: number[] = []): Promise<boolean> {
+  const observedPids = new Set(candidatePids.filter((pid) => pid > 0));
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const runtime = readRuntimePayload();
-    if (!runtime) {
-      return true;
-    }
     const runtimePid = getRuntimePid(runtime);
-    if (runtime.phase === "exited") {
+    if (runtimePid) {
+      observedPids.add(runtimePid);
+    }
+    const aliveObservedPid = [...observedPids].some((pid) => isPidAlive(pid));
+
+    if (!runtime) {
+      if (!aliveObservedPid) {
+        return true;
+      }
+      await sleep(runtimeExitPollMs);
+      continue;
+    }
+
+    if (runtime.phase === "exited" && !aliveObservedPid) {
       return true;
     }
-    if (runtimePid && !isPidAlive(runtimePid)) {
+
+    if (!aliveObservedPid && (!runtimePid || !isPidAlive(runtimePid))) {
       return true;
     }
-    await sleep(220);
+
+    await sleep(runtimeExitPollMs);
   }
-  return false;
+
+  const runtime = readRuntimePayload();
+  const runtimePid = getRuntimePid(runtime);
+  const aliveObservedPid = [...observedPids].some((pid) => isPidAlive(pid));
+  if (!runtime) {
+    return !aliveObservedPid;
+  }
+  return (runtime.phase === "exited" || !runtimePid || !isPidAlive(runtimePid)) && !aliveObservedPid;
 }
 
 function refreshRuntimeSnapshot(): LauncherState {
@@ -441,12 +516,12 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boole
     if (!isPidAlive(pid)) {
       return true;
     }
-    await sleep(180);
+    await sleep(processExitPollMs);
   }
   return !isPidAlive(pid);
 }
 
-function writeCommandFile(command: "stop"): void {
+function writeCommandFile(command: "stop" | "f9"): void {
   const commandFilePath = getCommandFilePath();
   const commandDir = path.dirname(commandFilePath);
   if (!existsSync(commandDir)) {
@@ -525,8 +600,17 @@ async function startTarget(): Promise<ActionResult> {
       hint: defaultHint,
       hotkeys: defaultHotkeys,
     });
-    await waitForRuntimeReady(8000);
+    const runtime = await waitForRuntimeReady(12000);
     refreshRuntimeSnapshot();
+    if (!runtime) {
+      const message = "启动请求已发出，请确认管理员权限提示是否已允许。";
+      pushLocalLog(message, "warn");
+      return {
+        ok: false,
+        message,
+        state: { ...state },
+      };
+    }
     return {
       ok: true,
       message: `已启动 ${target.label}`,
@@ -547,15 +631,23 @@ async function startTarget(): Promise<ActionResult> {
 async function stopTarget(): Promise<ActionResult> {
   refreshRuntimeSnapshot();
 
+  const target = resolveTarget();
   const runtimeBefore = readRuntimePayload();
-  const candidatePids = getStopCandidatePids(runtimeBefore);
+  const discoveredPids = await discoverBackendPids(target);
+  const candidatePids = [...new Set([...getStopCandidatePids(runtimeBefore), ...discoveredPids])];
   const pid = candidatePids[0] ?? null;
   const hasLiveRuntime =
-    Boolean(runtimeBefore) &&
-    runtimeBefore?.phase !== "exited" &&
-    (!getRuntimePid(runtimeBefore) || isPidAlive(getRuntimePid(runtimeBefore) as number));
+    candidatePids.some((candidatePid) => isPidAlive(candidatePid)) ||
+    (Boolean(runtimeBefore) &&
+      runtimeBefore?.phase !== "exited" &&
+      (!getRuntimePid(runtimeBefore) || isPidAlive(getRuntimePid(runtimeBefore) as number)));
 
   if (!pid && !hasLiveRuntime) {
+    try {
+      unlinkSync(getCommandFilePath());
+    } catch {
+      // Ignore stale command-file cleanup errors.
+    }
     return {
       ok: true,
       message: "脚本未运行",
@@ -564,21 +656,23 @@ async function stopTarget(): Promise<ActionResult> {
   }
 
   try {
-    writeCommandFile("stop");
+    writeCommandFile("f9");
     setState({
       running: false,
       status: "退出中",
       phase: "stopping",
       updatedAt: Date.now(),
     });
-    let stopped = await waitForRuntimeExit(7000);
+    let stopped = await waitForRuntimeExit(gracefulStopTimeoutMs, candidatePids);
     if (!stopped) {
       for (const candidatePid of candidatePids) {
         if (!isPidAlive(candidatePid)) {
           continue;
         }
         await stopWithPowerShell(candidatePid);
-        stopped = await waitForRuntimeExit(5000) || (await waitForProcessExit(candidatePid, 3000));
+        stopped =
+          (await waitForRuntimeExit(forcedStopTimeoutMs, candidatePids)) ||
+          (await waitForProcessExit(candidatePid, forcedStopTimeoutMs));
         if (stopped) {
           break;
         }
@@ -628,7 +722,25 @@ function createWindow(): void {
   mainWindow.removeMenu();
   mainWindow.setMenuBarVisibility(false);
   void mainWindow.loadFile(path.join(launcherRoot, "index.html"));
+  mainWindow.on("close", (event) => {
+    if (isWindowClosing) {
+      return;
+    }
+
+    event.preventDefault();
+    isWindowClosing = true;
+    void (async () => {
+      try {
+        await stopTarget();
+      } finally {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.destroy();
+        }
+      }
+    })();
+  });
   mainWindow.on("closed", () => {
+    isWindowClosing = false;
     mainWindow = null;
   });
 }

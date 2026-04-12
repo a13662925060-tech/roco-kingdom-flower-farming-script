@@ -33,6 +33,9 @@ VK_TAB = 0x09
 VK_2 = 0x32
 VK_ESCAPE = 0x1B
 VK_SPACE = 0x20
+VK_SHIFT = 0x10
+VK_R = 0x52
+VK_X = 0x58
 WM_QUIT = 0x0012
 
 WAIT_AFTER_DIALOG_MS = 7500
@@ -54,8 +57,8 @@ PROFILE_DESCRIPTION = "LuokeMacroHotkey private profile"
 PROFILE_ENTROPY = b"LuokeMacroHotkey/private-profile"
 PROFILE_DIR_NAME = "LuokeMacroHotkey"
 PROFILE_FILE_NAME = "private_profile.dpapi"
-STATUS_FILE_NAME = "launcher_status.json"
-COMMAND_FILE_NAME = "launcher_command.json"
+STATUS_FILE_NAME = "launcher_status_double.json"
+COMMAND_FILE_NAME = "launcher_command_double.json"
 STATUS_SCHEMA_VERSION = 1
 STATUS_LOG_LIMIT = 40
 STATUS_WRITE_RETRY_COUNT = 40
@@ -236,11 +239,10 @@ DEFAULT_STEPS = (
     {"action": "tap", "vk": VK_ESCAPE, "hold_ms": 100},
     {"action": "wait", "ms": 400},
     {"action": "tap", "vk": VK_SPACE, "hold_ms": 100},
-    {
-        "action": "wait_random",
-        "base_ms": WAIT_AFTER_DIALOG_MS,
-        "random_extra_ms": WAIT_RANDOM_EXTRA_MS,
-    },
+    {"action": "wait", "ms": 800},
+    {"action": "combo", "modifier_vk": VK_SHIFT, "vk": VK_R, "lead_ms": 40, "hold_ms": 100},
+    {"action": "wait", "ms": 7500},
+    {"action": "combo", "modifier_vk": VK_SHIFT, "vk": VK_X, "lead_ms": 40, "hold_ms": 100},
 )
 
 
@@ -728,6 +730,17 @@ def normalize_step(index: int, step: Any) -> dict[str, Any]:
             "vk": require_nonnegative_int(f"steps[{index}].vk", step.get("vk")),
             "hold_ms": require_nonnegative_int(f"steps[{index}].hold_ms", step.get("hold_ms")),
         }
+    if action == "combo":
+        return {
+            "action": "combo",
+            "modifier_vk": require_nonnegative_int(
+                f"steps[{index}].modifier_vk",
+                step.get("modifier_vk"),
+            ),
+            "vk": require_nonnegative_int(f"steps[{index}].vk", step.get("vk")),
+            "lead_ms": require_nonnegative_int(f"steps[{index}].lead_ms", step.get("lead_ms")),
+            "hold_ms": require_nonnegative_int(f"steps[{index}].hold_ms", step.get("hold_ms")),
+        }
     if action == "wait_random":
         return {
             "action": "wait_random",
@@ -864,6 +877,22 @@ def tap_key(
         send_key(vk, is_keyup=True)
 
 
+def press_modified_key(
+    modifier_vk: int,
+    vk: int,
+    lead_ms: int,
+    hold_ms: int,
+    should_continue: Optional[Callable[[], bool]] = None,
+) -> bool:
+    send_key(modifier_vk, is_keyup=False)
+    try:
+        if lead_ms > 0 and not interruptible_sleep_ms(lead_ms, should_continue=should_continue):
+            return False
+        return tap_key(vk, hold_ms, should_continue=should_continue)
+    finally:
+        send_key(modifier_vk, is_keyup=True)
+
+
 def focus_window_by_class(class_name: str) -> bool:
     hwnd = user32.FindWindowW(class_name, None)
     if not hwnd:
@@ -942,6 +971,25 @@ def run_once(
                 print(f"等待 {base_ms}ms + 随机 0-{random_extra_ms}ms -> {wait_ms}ms")
             else:
                 if not interruptible_sleep_ms(wait_ms, should_continue=should_continue):
+                    return False
+        elif action == "combo":
+            modifier_vk = int(step["modifier_vk"])
+            vk = int(step["vk"])
+            lead_ms = int(step["lead_ms"])
+            hold_ms = int(step["hold_ms"])
+            if dry_run:
+                print(
+                    f"combo modifier_vk={modifier_vk}, vk={vk}, "
+                    f"lead_ms={lead_ms}, hold_ms={hold_ms}"
+                )
+            else:
+                if not press_modified_key(
+                    modifier_vk,
+                    vk,
+                    lead_ms,
+                    hold_ms,
+                    should_continue=should_continue,
+                ):
                     return False
         else:
             vk = int(step["vk"])
