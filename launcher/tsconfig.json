@@ -12,6 +12,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "incremental": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
     "ignoreDeprecations": "6.0",
     "forceConsistentCasingInFileNames": true,
     "types": [

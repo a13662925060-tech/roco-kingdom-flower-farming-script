@@ -8,9 +8,11 @@
     "build:main": "tsc --project tsconfig.json",
     "build:renderer": "esbuild src/renderer.tsx --bundle --platform=browser --format=iife --outfile=dist/renderer.js",
     "build:backend": "pyinstaller SoloBowBackend.spec --distpath artifacts/backend --workpath build_backend --noconfirm",
+    "build:backend:smart": "node build-backend-if-needed.cjs",
     "build": "npm run build:main && npm run build:renderer",
     "start": "npm run build && node start-electron.cjs",
-    "package:portable": "npm run build && npm run build:backend && electron-builder --win portable"
+    "package:portable": "npm run build && npm run build:backend:smart && electron-builder --win portable",
+    "package:portable:fast": "npm run build && npm run build:backend:smart && electron-builder --win portable -c.compression=store"
   },
   "build": {
     "appId": "com.solobow.desktop",
@@ -18,6 +20,7 @@
     "artifactName": "${productName}.exe",
     "asar": true,
     "compression": "maximum",
+    "npmRebuild": false,
     "electronLanguages": [
       "zh-CN",
       "en-US"

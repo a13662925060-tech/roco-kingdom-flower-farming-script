@@ -288,6 +288,13 @@ function getRuntimePid(runtime: RuntimeStatusPayload | null): number | null {
   return typeof runtime?.pid === "number" ? runtime.pid : null;
 }
 
+function getStopCandidatePids(runtime: RuntimeStatusPayload | null): number[] {
+  const candidates = [getRuntimePid(runtime), state.pid].filter(
+    (pid): pid is number => typeof pid === "number" && pid > 0
+  );
+  return [...new Set(candidates)];
+}
+
 async function waitForRuntimeReady(timeoutMs: number): Promise<RuntimeStatusPayload | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -541,7 +548,8 @@ async function stopTarget(): Promise<ActionResult> {
   refreshRuntimeSnapshot();
 
   const runtimeBefore = readRuntimePayload();
-  const pid = state.pid ?? getRuntimePid(runtimeBefore);
+  const candidatePids = getStopCandidatePids(runtimeBefore);
+  const pid = candidatePids[0] ?? null;
   const hasLiveRuntime =
     Boolean(runtimeBefore) &&
     runtimeBefore?.phase !== "exited" &&
@@ -564,9 +572,17 @@ async function stopTarget(): Promise<ActionResult> {
       updatedAt: Date.now(),
     });
     let stopped = await waitForRuntimeExit(7000);
-    if (!stopped && pid && isPidAlive(pid)) {
-      await stopWithPowerShell(pid);
-      stopped = await waitForRuntimeExit(5000) || (await waitForProcessExit(pid, 3000));
+    if (!stopped) {
+      for (const candidatePid of candidatePids) {
+        if (!isPidAlive(candidatePid)) {
+          continue;
+        }
+        await stopWithPowerShell(candidatePid);
+        stopped = await waitForRuntimeExit(5000) || (await waitForProcessExit(candidatePid, 3000));
+        if (stopped) {
+          break;
+        }
+      }
     }
     refreshRuntimeSnapshot();
     pushLocalLog(stopped ? "脚本已关闭" : "脚本关闭请求已发送", "info");

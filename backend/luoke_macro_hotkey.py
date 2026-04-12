@@ -50,6 +50,8 @@ STATUS_FILE_NAME = "launcher_status.json"
 COMMAND_FILE_NAME = "launcher_command.json"
 STATUS_SCHEMA_VERSION = 1
 STATUS_LOG_LIMIT = 40
+STATUS_WRITE_RETRY_COUNT = 40
+STATUS_WRITE_RETRY_DELAY_MS = 25
 
 ULONG_PTR = wintypes.WPARAM
 LPBYTE = ctypes.POINTER(ctypes.c_ubyte)
@@ -277,12 +279,29 @@ def current_time_label() -> str:
 
 def write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    temp_path.write_text(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        encoding="utf-8",
+    payload_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    temp_path = path.with_name(
+        f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
     )
-    os.replace(temp_path, path)
+    temp_path.write_text(payload_text, encoding="utf-8")
+
+    last_error: Optional[PermissionError] = None
+    for _ in range(STATUS_WRITE_RETRY_COUNT):
+        try:
+            os.replace(temp_path, path)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            time.sleep(STATUS_WRITE_RETRY_DELAY_MS / 1000.0)
+
+    try:
+        temp_path.unlink()
+    except FileNotFoundError:
+        pass
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"无法写入状态文件：{path}")
 
 
 def make_runtime_status(config: "MacroConfig", dry_run: bool) -> dict[str, Any]:
