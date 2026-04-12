@@ -20,6 +20,7 @@ export_macro_*.emz3
 SoloBow.exe
 SoloBowV*.spec
 build/
+*.exe
 
 # Launcher build outputs
 launcher/node_modules/
