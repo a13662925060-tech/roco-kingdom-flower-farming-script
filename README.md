@@ -1,23 +1,110 @@
-<img width="1084" height="670" alt="脚本启动窗口" src="https://github.com/user-attachments/assets/0fc8872f-bb50-4e3a-a7ba-a46c6d36d8e2" />
+# Roco Kingdom Flower Farming Script
 
-## 📋 功能说明
+This repository contains a Windows automation tool for Roco Kingdom.
 
-本窗口仅用于**脚本启动**与**状态显示**，实际控制请通过键盘热键进行操作：
+Project layout:
 
-- **F8**：开始 / 暂停脚本
-- **F9**：退出脚本
+- `backend/`: Python backend script
+- `launcher/`: Electron + React launcher and packaging project
 
-## 🛠 环境准备
+## Requirements
 
-请先确保本机已安装以下运行环境：
+- Windows 10/11 x64
+- Node.js 20 LTS
+- Python 3.10 x64
+- Git
 
-- **Node.js 20 LTS**
-- **Python 3.10 x64**
+## Clone
 
-## 📦 打包步骤
+```powershell
+git clone https://github.com/a13662925060-tech/roco-kingdom-flower-farming-script.git
+cd .\roco-kingdom-flower-farming-script
+```
 
-在项目根目录执行以下命令：
+## Install dependencies
 
-```bash
+Install Python packaging tools:
+
+```powershell
+py -3.10 -m pip install --upgrade pip
+py -3.10 -m pip install pyinstaller
+```
+
+Install launcher dependencies:
+
+```powershell
+cd .\launcher
 npm ci
+```
+
+## Run in development
+
+```powershell
+cd .\launcher
+npm start
+```
+
+## Build EXE
+
+### Fast package
+
+Best for frequent local testing.
+
+```powershell
+cd .\launcher
+npm run package:portable:fast
+```
+
+Output:
+
+```powershell
+.\launcher\release\SoloBow.exe
+```
+
+### Release package
+
+Best for a smaller final build.
+
+```powershell
+cd .\launcher
 npm run package:portable
+```
+
+Output:
+
+```powershell
+.\launcher\release\SoloBow.exe
+```
+
+If you want to copy it to the project root:
+
+```powershell
+Copy-Item .\launcher\release\SoloBow.exe .\SoloBow.exe -Force
+```
+
+## Packaging optimizations
+
+The current packaging flow includes:
+
+- incremental TypeScript builds
+- smart backend rebuilds that skip PyInstaller when backend sources are unchanged
+- disabled Electron dependency rebuild during packaging
+- a faster local packaging command with `compression=store`
+
+## Troubleshooting
+
+### `pyinstaller` not found
+
+Run:
+
+```powershell
+py -3.10 -m pip install pyinstaller
+```
+
+### `npm` not found
+
+Install Node.js again and reopen the terminal.
+
+### No `exe` after cloning
+
+That is expected. Build artifacts are not committed to the repository. Run one of the packaging commands above to generate the EXE.
