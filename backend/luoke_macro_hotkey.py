@@ -1258,10 +1258,14 @@ def main() -> None:
             level="info",
         )
     pressed_hotkeys: set[int] = set()
+    hotkey_lock = threading.Lock()
+    start_hotkeys = (VK_F8,)
+    stop_hotkeys = (VK_F9,)
+    watched_hotkeys = start_hotkeys + stop_hotkeys
     hook_ref: dict[str, object] = {"handle": None, "proc": None}
 
     def handle_hotkey(vk: int) -> None:
-        if vk == VK_F8:
+        if vk in start_hotkeys:
             if running_event.is_set():
                 running_event.clear()
                 publish_runtime_status(
@@ -1298,7 +1302,7 @@ def main() -> None:
                     running=True,
                     target_hwnd=int(target_hwnd_ref.get("hwnd") or 0),
                 )
-        elif vk == VK_F9:
+        elif vk in stop_hotkeys:
             publish_runtime_status(
                 status_path,
                 status_lock,
@@ -1313,22 +1317,44 @@ def main() -> None:
             running_event.clear()
             user32.PostQuitMessage(0)
 
+    def trigger_hotkey_down(vk: int) -> None:
+        with hotkey_lock:
+            if vk in pressed_hotkeys:
+                return
+            pressed_hotkeys.add(vk)
+        handle_hotkey(vk)
+
+    def trigger_hotkey_up(vk: int) -> None:
+        with hotkey_lock:
+            pressed_hotkeys.discard(vk)
+
+    def hotkey_poll_worker() -> None:
+        key_states = {vk: False for vk in watched_hotkeys}
+        while not shutdown_event.is_set():
+            for vk in watched_hotkeys:
+                is_down = is_key_down(vk)
+                was_down = key_states[vk]
+                if is_down and not was_down:
+                    trigger_hotkey_down(vk)
+                elif not is_down and was_down:
+                    trigger_hotkey_up(vk)
+                key_states[vk] = is_down
+            time.sleep(0.03)
+
     @LowLevelKeyboardProc
     def keyboard_proc(n_code: int, w_param: int, l_param: int) -> int:
         if n_code == HC_ACTION:
             kb = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
             vk = int(kb.vkCode)
+            if vk in watched_hotkeys:
+                if w_param in (WM_KEYDOWN, WM_SYSKEYDOWN):
+                    trigger_hotkey_down(vk)
+                elif w_param in (WM_KEYUP, WM_SYSKEYUP):
+                    trigger_hotkey_up(vk)
+                return 1
+
             if kb.flags & LLKHF_INJECTED:
                 return user32.CallNextHookEx(hook_ref["handle"], n_code, w_param, l_param)
-
-            if vk in (VK_F8, VK_F9):
-                if w_param in (WM_KEYDOWN, WM_SYSKEYDOWN):
-                    if vk not in pressed_hotkeys:
-                        pressed_hotkeys.add(vk)
-                        handle_hotkey(vk)
-                elif w_param in (WM_KEYUP, WM_SYSKEYUP):
-                    pressed_hotkeys.discard(vk)
-                return 1
 
         return user32.CallNextHookEx(hook_ref["handle"], n_code, w_param, l_param)
 
@@ -1338,6 +1364,8 @@ def main() -> None:
     if not hook_handle:
         raise ctypes.WinError()
     hook_ref["handle"] = hook_handle
+    hotkey_poll_thread = threading.Thread(target=hotkey_poll_worker, daemon=True)
+    hotkey_poll_thread.start()
 
     msg = wintypes.MSG()
 
@@ -1368,6 +1396,7 @@ def main() -> None:
         shutdown_event.set()
         running_event.set()
         worker.join(timeout=1.0)
+        hotkey_poll_thread.join(timeout=1.0)
         command_worker.join(timeout=1.0)
         publish_runtime_status(
             status_path,
