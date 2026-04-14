@@ -27,7 +27,9 @@ launcher/node_modules/
 launcher/dist/
 launcher/release/
 launcher/build_backend/
+launcher/build_backend_double/
 launcher/artifacts/backend/
+launcher/LuokeMacroHotkeyDouble.spec
 
 # Keep build notes in the repo
 !launcher/artifacts/README.md
