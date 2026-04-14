@@ -21,11 +21,14 @@
 ```bash
 cd launcher
 npm ci
-npm run package:portable
+npm run package:folder
 ```
 
 打包完成后，生成的文件位置为：
 
 ```bash
-launcher/release/SoloBow.exe
+launcher/release/win-unpacked/SoloBow.exe
+launcher/release/SoloBow-1.0.0-x64.zip
 ```
+
+解压 `zip` 后，目录里会包含前端启动用的 `SoloBow.exe`、Electron 运行文件，以及内置的后端目录资源；用户只需要双击前端 `SoloBow.exe` 即可。

@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import ctypes
 import json
 import os
@@ -8,10 +8,29 @@ import sys
 import threading
 import time
 from ctypes import wintypes
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.shared.config import (
+    MacroConfig,
+    macro_config_to_payload as shared_macro_config_to_payload,
+    make_default_config,
+    normalize_macro_config as shared_normalize_macro_config,
+)
+from backend.shared.runtime_io import (
+    cleanup_stale_runtime_artifacts as shared_cleanup_stale_runtime_artifacts,
+    default_command_path as shared_default_command_path,
+    default_profile_path as shared_default_profile_path,
+    default_status_path as shared_default_status_path,
+    make_runtime_status as shared_make_runtime_status,
+    publish_runtime_status as shared_publish_runtime_status,
+    read_launcher_command as shared_read_launcher_command,
+)
 
 
 WH_KEYBOARD_LL = 13
@@ -243,13 +262,6 @@ DEFAULT_STEPS = (
     },
 )
 
-
-@dataclass
-class MacroConfig:
-    focus_class: str = ""
-    steps: list[dict[str, Any]] = field(default_factory=lambda: [dict(step) for step in DEFAULT_STEPS])
-
-
 def sleep_ms(ms: int) -> None:
     time.sleep(ms / 1000.0)
 
@@ -274,24 +286,15 @@ def interruptible_sleep_ms(
 
 
 def default_profile_path() -> Path:
-    local_appdata = os.environ.get("LOCALAPPDATA")
-    if not local_appdata:
-        local_appdata = str(Path.home() / "AppData" / "Local")
-    return Path(local_appdata) / PROFILE_DIR_NAME / PROFILE_FILE_NAME
+    return shared_default_profile_path(PROFILE_DIR_NAME, PROFILE_FILE_NAME)
 
 
 def default_status_path() -> Path:
-    local_appdata = os.environ.get("LOCALAPPDATA")
-    if not local_appdata:
-        local_appdata = str(Path.home() / "AppData" / "Local")
-    return Path(local_appdata) / PROFILE_DIR_NAME / STATUS_FILE_NAME
+    return shared_default_status_path(PROFILE_DIR_NAME, STATUS_FILE_NAME)
 
 
 def default_command_path() -> Path:
-    local_appdata = os.environ.get("LOCALAPPDATA")
-    if not local_appdata:
-        local_appdata = str(Path.home() / "AppData" / "Local")
-    return Path(local_appdata) / PROFILE_DIR_NAME / COMMAND_FILE_NAME
+    return shared_default_command_path(PROFILE_DIR_NAME, COMMAND_FILE_NAME)
 
 
 def current_timestamp_ms() -> int:
@@ -376,12 +379,11 @@ def cleanup_runtime_artifacts(status_path: Path, command_path: Path) -> None:
 
 
 def cleanup_stale_runtime_artifacts(status_path: Path, command_path: Path) -> None:
-    if not status_path.exists() and not command_path.exists():
-        return
-
-    stale_pid = read_runtime_pid(status_path)
-    if stale_pid is None or not is_pid_running(stale_pid):
-        cleanup_runtime_artifacts(status_path, command_path)
+    shared_cleanup_stale_runtime_artifacts(
+        status_path,
+        command_path,
+        is_pid_running=is_pid_running,
+    )
 
 
 def install_console_close_handler(
@@ -466,6 +468,23 @@ def read_launcher_command(command_path: Path) -> Optional[str]:
             command_path.unlink()
         except FileNotFoundError:
             pass
+
+
+def make_runtime_status(config: "MacroConfig", dry_run: bool) -> dict[str, Any]:
+    return shared_make_runtime_status(
+        focus_class=config.focus_class,
+        dry_run=dry_run,
+        status_schema_version=STATUS_SCHEMA_VERSION,
+        hint="请先用鼠标选中需要运行脚本的窗口，再按 F8 执行。",
+        hotkeys=[
+            {"key": "F8", "description": "开始/暂停"},
+            {"key": "F9", "description": "退出脚本"},
+        ],
+    )
+
+
+def read_launcher_command(command_path: Path) -> Optional[str]:
+    return shared_read_launcher_command(command_path)
 
 
 def request_shutdown(
@@ -639,6 +658,30 @@ def publish_runtime_status(
         flush_runtime_status(status_path, runtime_status)
 
 
+def publish_runtime_status(
+    status_path: Path,
+    status_lock: threading.Lock,
+    runtime_status: dict[str, Any],
+    *,
+    message: Optional[str] = None,
+    level: str = "info",
+    print_message: bool = True,
+    **changes: Any,
+) -> None:
+    shared_publish_runtime_status(
+        status_path,
+        status_lock,
+        runtime_status,
+        log_limit=STATUS_LOG_LIMIT,
+        retry_count=STATUS_WRITE_RETRY_COUNT,
+        retry_delay_ms=STATUS_WRITE_RETRY_DELAY_MS,
+        message=message,
+        level=level,
+        print_message=print_message,
+        **changes,
+    )
+
+
 def clone_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [dict(step) for step in steps]
 
@@ -770,6 +813,19 @@ def macro_config_to_payload(config: MacroConfig) -> dict[str, Any]:
         "focus_class": config.focus_class,
         "steps": clone_steps(config.steps),
     }
+
+
+def normalize_macro_config(raw: Any) -> MacroConfig:
+    return shared_normalize_macro_config(
+        raw,
+        profile_version=PROFILE_VERSION,
+        default_steps=DEFAULT_STEPS,
+        support_combo=False,
+    )
+
+
+def macro_config_to_payload(config: MacroConfig) -> dict[str, Any]:
+    return shared_macro_config_to_payload(config, profile_version=PROFILE_VERSION)
 
 
 def load_private_profile(path: Path) -> MacroConfig:
@@ -1099,7 +1155,7 @@ def main() -> None:
         if args.command_file
         else default_command_path()
     )
-    config = MacroConfig()
+    config = make_default_config(DEFAULT_STEPS)
     active_profile_path: Optional[Path] = None
 
     cleanup_stale_runtime_artifacts(status_path, command_path)

@@ -4,10 +4,16 @@ const { spawnSync } = require("child_process");
 
 const launcherRoot = __dirname;
 const sourceFiles = [
-  resolve(launcherRoot, "..", "backend", "luoke_macro_hotkey.py"),
+  resolve(launcherRoot, "..", "backend", "solo", "luoke_macro_hotkey.py"),
   resolve(launcherRoot, "SoloBowBackend.spec"),
 ];
-const outputFile = resolve(launcherRoot, "artifacts", "backend", "SoloBowBackend.exe");
+const outputFile = resolve(
+  launcherRoot,
+  "artifacts",
+  "backend",
+  "SoloBowBackend",
+  "SoloBowBackend.exe"
+);
 
 function getMtimeMs(filePath) {
   return statSync(filePath).mtimeMs;
@@ -23,7 +29,7 @@ function shouldRebuildBackend() {
 }
 
 if (!shouldRebuildBackend()) {
-  console.log("SoloBowBackend.exe is up to date, skipping PyInstaller rebuild.");
+  console.log("SoloBowBackend onedir build is up to date, skipping PyInstaller rebuild.");
   process.exit(0);
 }
 

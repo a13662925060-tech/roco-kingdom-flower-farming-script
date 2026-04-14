@@ -11,13 +11,13 @@
     "build:backend:smart": "node build-backend-if-needed.cjs",
     "build": "npm run build:main && npm run build:renderer",
     "start": "npm run build && node start-electron.cjs",
-    "package:portable": "npm run build && npm run build:backend:smart && electron-builder --win portable",
-    "package:portable:fast": "npm run build && npm run build:backend:smart && electron-builder --win portable -c.compression=store"
+    "package:folder": "npm run build && npm run build:backend:smart && electron-builder --win dir zip",
+    "package:folder:fast": "npm run build && npm run build:backend:smart && electron-builder --win dir zip -c.compression=store"
   },
   "build": {
     "appId": "com.solobow.desktop",
     "productName": "SoloBow",
-    "artifactName": "${productName}.exe",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
     "asar": true,
     "compression": "maximum",
     "npmRebuild": false,
@@ -36,14 +36,20 @@
     ],
     "extraResources": [
       {
-        "from": "artifacts/backend/SoloBowBackend.exe",
-        "to": "backend/SoloBowBackend.exe"
+        "from": "artifacts/backend/SoloBowBackend",
+        "to": "backend/SoloBowBackend"
       }
     ],
     "win": {
       "target": [
         {
-          "target": "portable",
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "x64"
           ]

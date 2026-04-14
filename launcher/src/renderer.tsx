@@ -68,7 +68,7 @@ const emptyState: LauncherState = {
   launchKind: "missing",
   cycle: 0,
   phase: "idle",
-  hint: "先启动脚本，再切到目标窗口按 F8。",
+  hint: "先启动脚本，再切换到目标窗口后按 F8。",
   hotkeys: [],
 };
 
@@ -80,27 +80,11 @@ const emptySnapshot: Snapshot = {
 const hiddenLogFragments = [
   "按下 F8 开始时，会记录当前选中的前台窗口。",
   "请先用鼠标选中需要运行脚本的窗口，再按 F8 执行。",
-  "F8：开始/暂停，F9：退出",
+  "F8：开始/暂停，F9：退出脚本",
 ];
 
 function isBackendActive(state: LauncherState): boolean {
   return state.pid !== null && state.phase !== "exited" && state.phase !== "missing";
-}
-
-function getStatusTone(state: LauncherState): string {
-  if (state.launchKind === "missing") {
-    return "missing";
-  }
-  if (state.running) {
-    return "running";
-  }
-  if (state.phase === "paused") {
-    return "paused";
-  }
-  if (state.phase === "error") {
-    return "error";
-  }
-  return "idle";
 }
 
 function getStatusHeadline(state: LauncherState): string {
@@ -247,7 +231,7 @@ function App(): React.JSX.Element {
           <p className="eyebrow">Roco Kingdom Solo Bow Script</p>
           <h1 className="card-title">洛克王国单人鞠躬脚本</h1>
           <p className="card-subtitle">
-            这个窗口只负责启动脚本和显示状态。真正的开始、暂停、退出，还是用键盘热键来操作。
+            这个窗口只负责启动脚本和显示状态。真正的开始、暂停和退出，仍然通过键盘热键来控制。
           </p>
 
           <div className="steps">
@@ -324,9 +308,7 @@ function App(): React.JSX.Element {
                   ))}
                 </div>
               ) : (
-                <div className="log-empty">
-                  启动后这里会显示脚本状态和轮数变化。
-                </div>
+                <div className="log-empty">启动后这里会显示脚本状态和轮数变化。</div>
               )}
             </div>
           </section>

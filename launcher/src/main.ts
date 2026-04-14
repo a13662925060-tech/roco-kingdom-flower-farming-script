@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const launcherRoot = path.resolve(__dirname, "..");
 const sourceWorkspaceRoot = path.resolve(launcherRoot, "..");
 const bundledBackendName = "SoloBowBackend.exe";
+const bundledBackendDirName = "SoloBowBackend";
 const runtimeDirName = "LuokeMacroHotkey";
 const runtimeStatusFileName = "launcher_status.json";
 const runtimeCommandFileName = "launcher_command.json";
@@ -218,7 +219,7 @@ function resolveBundledBackend(): string | null {
   if (!app.isPackaged) {
     return null;
   }
-  const backendPath = path.join(process.resourcesPath, "backend", bundledBackendName);
+  const backendPath = path.join(process.resourcesPath, "backend", bundledBackendDirName, bundledBackendName);
   return existsSync(backendPath) ? backendPath : null;
 }
 
@@ -234,7 +235,7 @@ function resolveTarget(): LaunchTarget {
     };
   }
 
-  const scriptPath = path.join(sourceWorkspaceRoot, "backend", "luoke_macro_hotkey.py");
+  const scriptPath = path.join(sourceWorkspaceRoot, "backend", "solo", "luoke_macro_hotkey.py");
   if (existsSync(scriptPath)) {
     const pythonCommand = existsOnPath("py") ? "py" : existsOnPath("python") ? "python" : "";
     if (pythonCommand) {
