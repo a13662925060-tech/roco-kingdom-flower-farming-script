@@ -108,6 +108,165 @@ button {
   letter-spacing: -0.05em;
 }
 
+.mode-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: var(--radius-item);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 248, 241, 0.72));
+  border: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.mode-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mode-panel-label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.mode-switcher {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 138px;
+  padding-right: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(171, 149, 126, 0.55) rgba(31, 49, 43, 0.03);
+}
+
+.mode-switcher::-webkit-scrollbar {
+  width: 6px;
+}
+
+.mode-switcher::-webkit-scrollbar-track {
+  background: rgba(31, 49, 43, 0.03);
+  border-radius: 999px;
+}
+
+.mode-switcher::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(194, 169, 145, 0.72), rgba(171, 149, 126, 0.78));
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+}
+
+.mode-switcher::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(203, 178, 154, 0.86), rgba(180, 157, 133, 0.9));
+}
+
+.mode-option {
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid rgba(31, 49, 43, 0.1);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 241, 234, 0.9));
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 10px 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease,
+    opacity 140ms ease;
+}
+
+.mode-option:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(204, 107, 52, 0.28);
+  box-shadow: 0 8px 18px rgba(175, 83, 34, 0.08);
+}
+
+.mode-option--active {
+  border-color: rgba(64, 168, 110, 0.34);
+  background:
+    radial-gradient(circle at top right, rgba(103, 199, 144, 0.12), transparent 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 249, 245, 0.96));
+  box-shadow: 0 10px 24px rgba(64, 168, 110, 0.1);
+}
+
+.mode-option:disabled {
+  opacity: 0.72;
+  cursor: default;
+  box-shadow: none;
+}
+
+.mode-option-grip {
+  display: grid;
+  grid-template-columns: repeat(2, 3px);
+  gap: 2px;
+  justify-content: center;
+  width: 8px;
+}
+
+.mode-option-grip span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(31, 49, 43, 0.22);
+}
+
+.mode-option-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 2px solid rgba(31, 49, 43, 0.22);
+  background: rgba(255, 255, 255, 0.9);
+  color: white;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.mode-option--active .mode-option-check {
+  border-color: #149a52;
+  background: #149a52;
+}
+
+.mode-option-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mode-option-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mode-option-description {
+  display: block;
+  color: rgba(31, 49, 43, 0.56);
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .card-subtitle {
   margin: 10px 0 0;
   color: var(--ink-soft);
@@ -118,7 +277,7 @@ button {
 .steps {
   display: grid;
   gap: 10px;
-  margin: 20px 0 0;
+  margin: 14px 0 0;
 }
 
 .step-item {
@@ -157,6 +316,10 @@ button {
   line-height: 1.45;
 }
 
+.step-button-slot {
+  margin: 2px 0;
+}
+
 .start-button {
   width: 100%;
   padding: 14px 16px;
@@ -168,11 +331,6 @@ button {
   font-weight: 700;
   cursor: pointer;
   transition: transform 140ms ease, opacity 140ms ease;
-}
-
-.button-wrap {
-  margin-top: auto;
-  padding-top: 18px;
 }
 
 .start-button:hover:not(:disabled) {
@@ -187,7 +345,7 @@ button {
 
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-top: 16px;
 }

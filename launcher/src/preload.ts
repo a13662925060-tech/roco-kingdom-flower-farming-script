@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type LaunchKind = "exe" | "python" | "missing";
 type LogLevel = "info" | "success" | "warn" | "error";
+type ScriptVariant = "solo" | "double" | "doubleLaugh";
 
 type HotkeyInfo = {
   key: string;
@@ -21,6 +22,8 @@ type LauncherState = {
   phase: string;
   hint: string;
   hotkeys: HotkeyInfo[];
+  selectedVariant: ScriptVariant;
+  activeVariant: ScriptVariant | null;
 };
 
 type LogEntry = {
@@ -44,6 +47,8 @@ type ActionResult = {
 
 contextBridge.exposeInMainWorld("launcherApi", {
   getSnapshot: (): Promise<Snapshot> => ipcRenderer.invoke("launcher:get-snapshot"),
+  setVariant: (variant: ScriptVariant): Promise<Snapshot> =>
+    ipcRenderer.invoke("launcher:set-variant", variant),
   start: (): Promise<ActionResult> => ipcRenderer.invoke("launcher:start"),
   stop: (): Promise<ActionResult> => ipcRenderer.invoke("launcher:stop"),
   refreshNow: (): Promise<Snapshot> => ipcRenderer.invoke("launcher:refresh-now"),

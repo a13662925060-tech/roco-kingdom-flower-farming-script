@@ -1,8 +1,9 @@
-import React, { startTransition, useDeferredValue, useEffect, useState } from "react";
+import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 type LaunchKind = "exe" | "python" | "missing";
 type LogLevel = "info" | "success" | "warn" | "error";
+type ScriptVariant = "solo" | "double" | "doubleLaugh";
 
 type HotkeyInfo = {
   key: string;
@@ -22,6 +23,8 @@ type LauncherState = {
   phase: string;
   hint: string;
   hotkeys: HotkeyInfo[];
+  selectedVariant: ScriptVariant;
+  activeVariant: ScriptVariant | null;
 };
 
 type LogEntry = {
@@ -45,10 +48,17 @@ type ActionResult = {
 
 type PendingAction = "start" | "stop" | null;
 
+type VariantOption = {
+  id: ScriptVariant;
+  label: string;
+  description: string;
+};
+
 declare global {
   interface Window {
     launcherApi: {
       getSnapshot: () => Promise<Snapshot>;
+      setVariant: (variant: ScriptVariant) => Promise<Snapshot>;
       start: () => Promise<ActionResult>;
       stop: () => Promise<ActionResult>;
       refreshNow: () => Promise<Snapshot>;
@@ -56,6 +66,24 @@ declare global {
     };
   }
 }
+
+const variantOptions: VariantOption[] = [
+  {
+    id: "solo",
+    label: "小号单人鞠躬模式",
+    description: "单窗口",
+  },
+  {
+    id: "double",
+    label: "双人鞠躬跳模式",
+    description: "双窗口",
+  },
+  {
+    id: "doubleLaugh",
+    label: "双人大笑模式",
+    description: "扩展动作",
+  },
+];
 
 const emptyState: LauncherState = {
   running: false,
@@ -70,6 +98,8 @@ const emptyState: LauncherState = {
   phase: "idle",
   hint: "先启动脚本，再切换到目标窗口后按 F8。",
   hotkeys: [],
+  selectedVariant: "solo",
+  activeVariant: null,
 };
 
 const emptySnapshot: Snapshot = {
@@ -85,6 +115,26 @@ const hiddenLogFragments = [
 
 function isBackendActive(state: LauncherState): boolean {
   return state.pid !== null && state.phase !== "exited" && state.phase !== "missing";
+}
+
+function getVariantLabel(variant: ScriptVariant | null): string {
+  if (variant === "double") {
+    return "双人鞠躬跳模式";
+  }
+  if (variant === "doubleLaugh") {
+    return "双人大笑模式";
+  }
+  return "小号单人鞠躬模式";
+}
+
+function getVariantStatusLabel(variant: ScriptVariant | null): string {
+  if (variant === "double") {
+    return "双人鞠躬跳";
+  }
+  if (variant === "doubleLaugh") {
+    return "双人大笑";
+  }
+  return "小号单人鞠躬";
 }
 
 function getStatusHeadline(state: LauncherState): string {
@@ -146,6 +196,7 @@ function makeOptimisticState(state: LauncherState, pendingAction: PendingAction)
       status: "启动中",
       cycle: 0,
       updatedAt: Date.now(),
+      activeVariant: state.selectedVariant,
     };
   }
 
@@ -165,13 +216,16 @@ function makeOptimisticState(state: LauncherState, pendingAction: PendingAction)
 function App(): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<Snapshot>(emptySnapshot);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const logPanelRef = useRef<HTMLDivElement | null>(null);
   const deferredLogs = useDeferredValue(snapshot.logs);
   const state = snapshot.state;
   const logs = deferredLogs
     .filter((entry) => !hiddenLogFragments.some((text) => entry.message.includes(text)))
-    .slice(0, 20);
+    .slice(0, 20)
+    .reverse();
   const statusHeadline = getStatusHeadline(state);
   const backendActive = isBackendActive(state);
+  const currentVariant = state.activeVariant ?? state.selectedVariant;
 
   useEffect(() => {
     let alive = true;
@@ -193,6 +247,23 @@ function App(): React.JSX.Element {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    const logPanel = logPanelRef.current;
+    if (!logPanel) {
+      return;
+    }
+    logPanel.scrollTop = logPanel.scrollHeight;
+  }, [logs]);
+
+  async function handleVariantChange(nextVariant: ScriptVariant): Promise<void> {
+    if (pendingAction || backendActive) {
+      return;
+    }
+
+    const nextSnapshot = await window.launcherApi.setVariant(nextVariant);
+    setSnapshot(nextSnapshot);
+  }
 
   async function handleStart(): Promise<void> {
     if (pendingAction || state.launchKind === "missing") {
@@ -228,47 +299,70 @@ function App(): React.JSX.Element {
     <main className="app-shell">
       <section className="dashboard">
         <article className="card">
-          <p className="eyebrow">Roco Kingdom Solo Bow Script</p>
-          <h1 className="card-title">洛克王国单人鞠躬脚本</h1>
-          <p className="card-subtitle">
-            这个窗口只负责启动脚本和显示状态。真正的开始、暂停和退出，仍然通过键盘热键来控制。
-          </p>
+          <h1 className="card-title">洛克王国脚本</h1>
+
+          <section className="mode-panel">
+            <div className="mode-panel-header">
+              <p className="mode-panel-label">运行模式</p>
+            </div>
+            <div className="mode-switcher" role="radiogroup" aria-label="运行模式">
+              {variantOptions.map((option) => {
+                const isActive = state.selectedVariant === option.id;
+                return (
+                  <button
+                    aria-checked={isActive}
+                    className={`mode-option${isActive ? " mode-option--active" : ""}`}
+                    disabled={pendingAction !== null || backendActive}
+                    key={option.id}
+                    onClick={() => {
+                      void handleVariantChange(option.id);
+                    }}
+                    role="radio"
+                    type="button"
+                  >
+                    <span aria-hidden="true" className="mode-option-grip">
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                    </span>
+                    <span aria-hidden="true" className="mode-option-check">
+                      {isActive ? "✓" : ""}
+                    </span>
+                    <span className="mode-option-body">
+                      <span className="mode-option-title">{option.label}</span>
+                      <span className="mode-option-description">{option.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
 
           <div className="steps">
             <div className="step-item">
               <span className="step-index">01</span>
               <div>
-                <p className="step-title">先点启动脚本</p>
-                <p className="step-copy">先让脚本进入待命状态。</p>
+                <p className="step-title">操作提示</p>
+                <p className="step-copy">
+                  选择运行模式后，选中想要运行脚本的窗口，按F8启动/暂停脚本，F9结束脚本。
+                </p>
               </div>
             </div>
-            <div className="step-item">
-              <span className="step-index">02</span>
-              <div>
-                <p className="step-title">再选中目标窗口</p>
-                <p className="step-copy">用鼠标点一下你要运行脚本的窗口。</p>
-              </div>
+            <div className="step-button-slot">
+              <button
+                className="start-button"
+                disabled={pendingAction !== null || state.launchKind === "missing"}
+                onClick={() => {
+                  void handleStart();
+                }}
+                type="button"
+              >
+                {getButtonLabel(state, pendingAction)}
+              </button>
             </div>
-            <div className="step-item">
-              <span className="step-index">03</span>
-              <div>
-                <p className="step-title">最后用热键控制</p>
-                <p className="step-copy">F8 开始或暂停，F9 退出。</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="button-wrap">
-            <button
-              className="start-button"
-              disabled={pendingAction !== null || state.launchKind === "missing"}
-              onClick={() => {
-                void handleStart();
-              }}
-              type="button"
-            >
-              {getButtonLabel(state, pendingAction)}
-            </button>
           </div>
         </article>
 
@@ -284,6 +378,12 @@ function App(): React.JSX.Element {
               <strong className="status-meta-value status-meta-value--small">{statusHeadline}</strong>
             </div>
             <div className="status-meta">
+              <span className="status-meta-label">运行模式</span>
+              <strong className="status-meta-value status-meta-value--small">
+                {getVariantStatusLabel(currentVariant)}
+              </strong>
+            </div>
+            <div className="status-meta">
               <span className="status-meta-label">运行轮数</span>
               <strong className="status-meta-value">{state.cycle}</strong>
             </div>
@@ -291,7 +391,7 @@ function App(): React.JSX.Element {
 
           <section className="log-block">
             <h3 className="log-title">日志</h3>
-            <div className="log-panel">
+            <div className="log-panel" ref={logPanelRef}>
               {logs.length ? (
                 <div className="log-list">
                   {logs.map((entry) => (

@@ -8,11 +8,7 @@ import { promisify } from "util";
 const execFileAsync = promisify(execFile);
 const launcherRoot = path.resolve(__dirname, "..");
 const sourceWorkspaceRoot = path.resolve(launcherRoot, "..");
-const bundledBackendName = "SoloBowBackend.exe";
-const bundledBackendDirName = "SoloBowBackend";
 const runtimeDirName = "LuokeMacroHotkey";
-const runtimeStatusFileName = "launcher_status.json";
-const runtimeCommandFileName = "launcher_command.json";
 const snapshotPollMs = 700;
 const runtimeExitPollMs = 60;
 const gracefulStopTimeoutMs = 450;
@@ -28,10 +24,20 @@ const defaultHotkeys = [
 
 type LaunchKind = "exe" | "python" | "missing";
 type LogLevel = "info" | "success" | "warn" | "error";
+type ScriptVariant = "solo" | "double" | "doubleLaugh";
 
 type HotkeyInfo = {
   key: string;
   description: string;
+};
+
+type VariantConfig = {
+  label: string;
+  statusFileName: string;
+  commandFileName: string;
+  sourceScriptRelativePath: string[];
+  bundledBackendName: string;
+  bundledBackendDirName: string;
 };
 
 type LogEntry = {
@@ -73,14 +79,21 @@ type LauncherState = {
   phase: string;
   hint: string;
   hotkeys: HotkeyInfo[];
+  selectedVariant: ScriptVariant;
+  activeVariant: ScriptVariant | null;
 };
 
 type LaunchTarget = {
+  variant: ScriptVariant;
+  variantLabel: string;
   kind: LaunchKind;
   label: string;
   targetPath: string;
   commandPath: string;
   args: string[];
+  processName: string;
+  statusFilePath: string;
+  commandFilePath: string;
 };
 
 type ActionResult = {
@@ -88,6 +101,36 @@ type ActionResult = {
   message: string;
   state: LauncherState;
 };
+
+const variantConfigs: Record<ScriptVariant, VariantConfig> = {
+  solo: {
+    label: "小号单人鞠躬模式",
+    statusFileName: "launcher_status.json",
+    commandFileName: "launcher_command.json",
+    sourceScriptRelativePath: ["backend", "solo", "luoke_macro_hotkey.py"],
+    bundledBackendName: "SoloBowBackend.exe",
+    bundledBackendDirName: "SoloBowBackend",
+  },
+  double: {
+    label: "双人鞠躬跳模式",
+    statusFileName: "launcher_status_double.json",
+    commandFileName: "launcher_command_double.json",
+    sourceScriptRelativePath: ["backend", "double", "luoke_macro_hotkey_double.py"],
+    bundledBackendName: "DoubleBowBackend.exe",
+    bundledBackendDirName: "DoubleBowBackend",
+  },
+  doubleLaugh: {
+    label: "双人大笑模式",
+    statusFileName: "launcher_status_double_laugh.json",
+    commandFileName: "launcher_command_double_laugh.json",
+    sourceScriptRelativePath: ["backend", "doubleLaugh", "luoke_macro_hotkey_double_laugh.py"],
+    bundledBackendName: "DoubleLaughBowBackend.exe",
+    bundledBackendDirName: "DoubleLaughBowBackend",
+  },
+};
+
+const scriptVariants = Object.keys(variantConfigs) as ScriptVariant[];
+const defaultVariant: ScriptVariant = "solo";
 
 let mainWindow: BrowserWindow | null = null;
 let pollTimer: NodeJS.Timeout | null = null;
@@ -110,20 +153,30 @@ const state: LauncherState = {
   phase: "idle",
   hint: defaultHint,
   hotkeys: defaultHotkeys,
+  selectedVariant: defaultVariant,
+  activeVariant: null,
 };
 
 function nowLabel(): string {
   return new Date().toLocaleTimeString("zh-CN", { hour12: false });
 }
 
-function getStatusFilePath(): string {
-  const localAppData = process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
-  return path.join(localAppData, runtimeDirName, runtimeStatusFileName);
+function getVariantConfig(variant: ScriptVariant): VariantConfig {
+  return variantConfigs[variant];
 }
 
-function getCommandFilePath(): string {
+function isScriptVariant(value: unknown): value is ScriptVariant {
+  return typeof value === "string" && value in variantConfigs;
+}
+
+function getStatusFilePath(variant: ScriptVariant): string {
   const localAppData = process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
-  return path.join(localAppData, runtimeDirName, runtimeCommandFileName);
+  return path.join(localAppData, runtimeDirName, getVariantConfig(variant).statusFileName);
+}
+
+function getCommandFilePath(variant: ScriptVariant): string {
+  const localAppData = process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
+  return path.join(localAppData, runtimeDirName, getVariantConfig(variant).commandFileName);
 }
 
 function getVisibleAppDir(): string {
@@ -215,52 +268,99 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-function resolveBundledBackend(): string | null {
+function isLauncherBackendActive(currentState: LauncherState = state): boolean {
+  return currentState.pid !== null && currentState.phase !== "exited" && currentState.phase !== "missing";
+}
+
+function getVariantOrder(preferredVariant: ScriptVariant): ScriptVariant[] {
+  return [preferredVariant, ...scriptVariants.filter((variant) => variant !== preferredVariant)];
+}
+
+function resolveBundledBackend(variant: ScriptVariant): string | null {
   if (!app.isPackaged) {
     return null;
   }
-  const backendPath = path.join(process.resourcesPath, "backend", bundledBackendDirName, bundledBackendName);
+
+  const config = getVariantConfig(variant);
+  const backendPath = path.join(
+    process.resourcesPath,
+    "backend",
+    config.bundledBackendDirName,
+    config.bundledBackendName
+  );
   return existsSync(backendPath) ? backendPath : null;
 }
 
-function resolveTarget(): LaunchTarget {
-  const bundledBackend = resolveBundledBackend();
+function resolveTarget(variant: ScriptVariant): LaunchTarget {
+  const config = getVariantConfig(variant);
+  const bundledBackend = resolveBundledBackend(variant);
   if (bundledBackend) {
     return {
+      variant,
+      variantLabel: config.label,
       kind: "exe",
-      label: "内置脚本后端",
+      label: `${config.label} · 内置脚本后端`,
       targetPath: bundledBackend,
       commandPath: bundledBackend,
       args: [],
+      processName: config.bundledBackendName,
+      statusFilePath: getStatusFilePath(variant),
+      commandFilePath: getCommandFilePath(variant),
     };
   }
 
-  const scriptPath = path.join(sourceWorkspaceRoot, "backend", "solo", "luoke_macro_hotkey.py");
+  const scriptPath = path.join(sourceWorkspaceRoot, ...config.sourceScriptRelativePath);
   if (existsSync(scriptPath)) {
-    const pythonCommand = existsOnPath("py") ? "py" : existsOnPath("python") ? "python" : "";
+    const pythonCommand = existsOnPath("pythonw")
+      ? "pythonw"
+      : existsOnPath("pyw")
+        ? "pyw"
+        : existsOnPath("py")
+          ? "py"
+          : existsOnPath("python")
+            ? "python"
+            : "";
     if (pythonCommand) {
       return {
+        variant,
+        variantLabel: config.label,
         kind: "python",
-        label: "Python 脚本后端",
+        label: `${config.label} · Python 脚本后端`,
         targetPath: scriptPath,
         commandPath: pythonCommand,
         args: pythonCommand === "py" ? ["-3", scriptPath] : [scriptPath],
+        processName: path.basename(
+          pythonCommand === "py"
+            ? "py.exe"
+            : pythonCommand === "pythonw"
+              ? "pythonw.exe"
+              : pythonCommand
+        ),
+        statusFilePath: getStatusFilePath(variant),
+        commandFilePath: getCommandFilePath(variant),
       };
     }
   }
 
   return {
+    variant,
+    variantLabel: config.label,
     kind: "missing",
-    label: "未找到脚本后端",
+    label: `${config.label} · 未找到脚本后端`,
     targetPath: "",
     commandPath: "",
     args: [],
+    processName: "",
+    statusFilePath: getStatusFilePath(variant),
+    commandFilePath: getCommandFilePath(variant),
   };
 }
 
-function applyIdleSnapshot(target: LaunchTarget): LauncherState {
-  const launchingPidAlive = state.phase === "launching" && state.pid ? isPidAlive(state.pid) : false;
+function applyIdleSnapshot(target: LaunchTarget, selectedVariant: ScriptVariant): LauncherState {
+  const launchingSameVariant = state.phase === "launching" && state.activeVariant === selectedVariant && state.pid;
+  const launchingPidAlive = Boolean(launchingSameVariant && isPidAlive(state.pid as number));
   const nextStatus = target.kind === "missing" ? "未找到脚本" : launchingPidAlive ? "启动中" : "等待启动";
+
   return setState({
     running: false,
     status: nextStatus,
@@ -274,11 +374,13 @@ function applyIdleSnapshot(target: LaunchTarget): LauncherState {
     phase: target.kind === "missing" ? "missing" : launchingPidAlive ? "launching" : "idle",
     hint: defaultHint,
     hotkeys: defaultHotkeys,
+    selectedVariant,
+    activeVariant: launchingPidAlive ? selectedVariant : null,
   });
 }
 
-function readRuntimePayload(): RuntimeStatusPayload | null {
-  const statusFilePath = getStatusFilePath();
+function readRuntimePayload(variant: ScriptVariant): RuntimeStatusPayload | null {
+  const statusFilePath = getStatusFilePath(variant);
   if (!existsSync(statusFilePath)) {
     return null;
   }
@@ -303,6 +405,20 @@ function isRuntimeReady(runtime: RuntimeStatusPayload | null): boolean {
   return (runtime?.phase ?? "") !== "elevating";
 }
 
+function findActiveRuntime(
+  preferredVariant: ScriptVariant
+): { variant: ScriptVariant; runtime: RuntimeStatusPayload } | null {
+  for (const variant of getVariantOrder(preferredVariant)) {
+    const runtime = readRuntimePayload(variant);
+    const pid = getRuntimePid(runtime);
+    if (runtime && pid && isPidAlive(pid)) {
+      return { variant, runtime };
+    }
+  }
+
+  return null;
+}
+
 function getStopCandidatePids(runtime: RuntimeStatusPayload | null): number[] {
   const candidates = [getRuntimePid(runtime), state.pid].filter(
     (pid): pid is number => typeof pid === "number" && pid > 0
@@ -317,9 +433,10 @@ async function discoverBackendPids(target: LaunchTarget): Promise<number[]> {
 
   const script = `
 $targetPath = ${JSON.stringify(target.targetPath)};
+$processName = ${JSON.stringify(target.processName)};
 $kind = ${JSON.stringify(target.kind)};
 if ($kind -eq 'exe') {
-  Get-CimInstance Win32_Process -Filter "Name = 'SoloBowBackend.exe'" |
+  Get-CimInstance Win32_Process -Filter "Name = '$processName'" |
     Select-Object -ExpandProperty ProcessId
 } else {
   Get-CimInstance Win32_Process |
@@ -339,35 +456,44 @@ if ($kind -eq 'exe') {
       { cwd: getWorkingDirectory(), windowsHide: true }
     );
 
-    return [...new Set(
-      stdout
-        .split(/\r?\n/)
-        .map((line) => Number.parseInt(line.trim(), 10))
-        .filter((pid): pid is number => Number.isFinite(pid) && pid > 0)
-    )];
+    return [
+      ...new Set(
+        stdout
+          .split(/\r?\n/)
+          .map((line) => Number.parseInt(line.trim(), 10))
+          .filter((pid): pid is number => Number.isFinite(pid) && pid > 0)
+      ),
+    ];
   } catch {
     return [];
   }
 }
 
-async function waitForRuntimeReady(timeoutMs: number): Promise<RuntimeStatusPayload | null> {
+async function waitForRuntimeReady(
+  variant: ScriptVariant,
+  timeoutMs: number
+): Promise<RuntimeStatusPayload | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const runtime = readRuntimePayload();
+    const runtime = readRuntimePayload(variant);
     if (isRuntimeReady(runtime)) {
       return runtime;
     }
     await sleep(220);
   }
-  const runtime = readRuntimePayload();
+  const runtime = readRuntimePayload(variant);
   return isRuntimeReady(runtime) ? runtime : null;
 }
 
-async function waitForRuntimeExit(timeoutMs: number, candidatePids: number[] = []): Promise<boolean> {
+async function waitForRuntimeExit(
+  variant: ScriptVariant,
+  timeoutMs: number,
+  candidatePids: number[] = []
+): Promise<boolean> {
   const observedPids = new Set(candidatePids.filter((pid) => pid > 0));
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const runtime = readRuntimePayload();
+    const runtime = readRuntimePayload(variant);
     const runtimePid = getRuntimePid(runtime);
     if (runtimePid) {
       observedPids.add(runtimePid);
@@ -393,7 +519,7 @@ async function waitForRuntimeExit(timeoutMs: number, candidatePids: number[] = [
     await sleep(runtimeExitPollMs);
   }
 
-  const runtime = readRuntimePayload();
+  const runtime = readRuntimePayload(variant);
   const runtimePid = getRuntimePid(runtime);
   const aliveObservedPid = [...observedPids].some((pid) => isPidAlive(pid));
   if (!runtime) {
@@ -403,14 +529,15 @@ async function waitForRuntimeExit(timeoutMs: number, candidatePids: number[] = [
 }
 
 function refreshRuntimeSnapshot(): LauncherState {
-  const target = resolveTarget();
-  const runtime = readRuntimePayload();
+  const activeRuntime = findActiveRuntime(state.activeVariant ?? state.selectedVariant);
 
-  if (!runtime) {
+  if (!activeRuntime) {
     setLogs([]);
-    return applyIdleSnapshot(target);
+    return applyIdleSnapshot(resolveTarget(state.selectedVariant), state.selectedVariant);
   }
 
+  const { variant, runtime } = activeRuntime;
+  const target = resolveTarget(variant);
   let pid = typeof runtime.pid === "number" ? runtime.pid : null;
   const pidAlive = pid ? isPidAlive(pid) : false;
   let running = Boolean(runtime.running) && pidAlive;
@@ -450,6 +577,8 @@ function refreshRuntimeSnapshot(): LauncherState {
               typeof entry.description === "string"
           )
         : defaultHotkeys,
+    selectedVariant: variant,
+    activeVariant: pidAlive ? variant : null,
   });
 }
 
@@ -466,9 +595,9 @@ function launchArguments(target: LaunchTarget): string[] {
   return [
     ...target.args,
     "--status-file",
-    getStatusFilePath(),
+    target.statusFilePath,
     "--command-file",
-    getCommandFilePath(),
+    target.commandFilePath,
   ];
 }
 
@@ -478,6 +607,7 @@ async function launchWithPowerShell(target: LaunchTarget): Promise<number> {
     `Start-Process -FilePath '${target.commandPath.replace(/'/g, "''")}'`,
     `-WorkingDirectory '${getWorkingDirectory().replace(/'/g, "''")}'`,
     args.length ? `-ArgumentList ${args.map((arg) => `'${arg.replace(/'/g, "''")}'`).join(", ")}` : "",
+    "-WindowStyle Hidden",
     "-Verb RunAs -PassThru",
   ]
     .filter(Boolean)
@@ -522,8 +652,8 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boole
   return !isPidAlive(pid);
 }
 
-function writeCommandFile(command: "stop" | "f9"): void {
-  const commandFilePath = getCommandFilePath();
+function writeCommandFile(variant: ScriptVariant, command: "stop" | "f9"): void {
+  const commandFilePath = getCommandFilePath(variant);
   const commandDir = path.dirname(commandFilePath);
   if (!existsSync(commandDir)) {
     mkdirSync(commandDir, { recursive: true });
@@ -552,36 +682,35 @@ function writeCommandFile(command: "stop" | "f9"): void {
 async function startTarget(): Promise<ActionResult> {
   refreshRuntimeSnapshot();
 
-  if (state.running && state.pid) {
+  if (isLauncherBackendActive(state) && state.pid) {
+    const activeLabel = getVariantConfig(state.activeVariant ?? state.selectedVariant).label;
     return {
       ok: true,
-      message: `脚本已经在运行，PID ${state.pid}`,
+      message: `${activeLabel}已经在运行，PID ${state.pid}`,
       state: { ...state },
     };
   }
 
-  const target = resolveTarget();
+  const target = resolveTarget(state.selectedVariant);
   if (target.kind === "missing") {
-    applyIdleSnapshot(target);
-    pushLocalLog("没有找到可运行的脚本后端。", "error");
+    applyIdleSnapshot(target, state.selectedVariant);
+    pushLocalLog(`没有找到${target.variantLabel}可运行的脚本后端。`, "error");
     return {
       ok: false,
-      message: "没有找到可运行的脚本后端。",
+      message: `没有找到${target.variantLabel}可运行的脚本后端。`,
       state: { ...state },
     };
   }
 
   try {
-    const statusFilePath = getStatusFilePath();
-    if (existsSync(statusFilePath)) {
-      unlinkSync(statusFilePath);
+    if (existsSync(target.statusFilePath)) {
+      unlinkSync(target.statusFilePath);
     }
-    const commandFilePath = getCommandFilePath();
-    if (existsSync(commandFilePath)) {
-      unlinkSync(commandFilePath);
+    if (existsSync(target.commandFilePath)) {
+      unlinkSync(target.commandFilePath);
     }
   } catch {
-    // Ignore stale status-file cleanup errors.
+    // Ignore stale runtime-file cleanup errors.
   }
   setLogs([]);
 
@@ -600,11 +729,13 @@ async function startTarget(): Promise<ActionResult> {
       phase: "launching",
       hint: defaultHint,
       hotkeys: defaultHotkeys,
+      selectedVariant: target.variant,
+      activeVariant: target.variant,
     });
-    const runtime = await waitForRuntimeReady(12000);
+    const runtime = await waitForRuntimeReady(target.variant, 12000);
     refreshRuntimeSnapshot();
     if (!runtime) {
-      const message = "启动请求已发出，请确认管理员权限提示是否已允许。";
+      const message = `${target.variantLabel}启动请求已发出，请确认管理员权限提示是否已允许。`;
       pushLocalLog(message, "warn");
       return {
         ok: false,
@@ -614,7 +745,7 @@ async function startTarget(): Promise<ActionResult> {
     }
     return {
       ok: true,
-      message: `已启动 ${target.label}`,
+      message: `已启动${target.variantLabel}`,
       state: { ...state },
     };
   } catch (error) {
@@ -632,8 +763,9 @@ async function startTarget(): Promise<ActionResult> {
 async function stopTarget(): Promise<ActionResult> {
   refreshRuntimeSnapshot();
 
-  const target = resolveTarget();
-  const runtimeBefore = readRuntimePayload();
+  const activeVariant = state.activeVariant ?? state.selectedVariant;
+  const target = resolveTarget(activeVariant);
+  const runtimeBefore = readRuntimePayload(activeVariant);
   const discoveredPids = await discoverBackendPids(target);
   const candidatePids = [...new Set([...getStopCandidatePids(runtimeBefore), ...discoveredPids])];
   const pid = candidatePids[0] ?? null;
@@ -645,7 +777,7 @@ async function stopTarget(): Promise<ActionResult> {
 
   if (!pid && !hasLiveRuntime) {
     try {
-      unlinkSync(getCommandFilePath());
+      unlinkSync(target.commandFilePath);
     } catch {
       // Ignore stale command-file cleanup errors.
     }
@@ -657,14 +789,15 @@ async function stopTarget(): Promise<ActionResult> {
   }
 
   try {
-    writeCommandFile("f9");
+    writeCommandFile(activeVariant, "f9");
     setState({
       running: false,
       status: "退出中",
       phase: "stopping",
       updatedAt: Date.now(),
+      activeVariant,
     });
-    let stopped = await waitForRuntimeExit(gracefulStopTimeoutMs, candidatePids);
+    let stopped = await waitForRuntimeExit(activeVariant, gracefulStopTimeoutMs, candidatePids);
     if (!stopped) {
       for (const candidatePid of candidatePids) {
         if (!isPidAlive(candidatePid)) {
@@ -672,7 +805,7 @@ async function stopTarget(): Promise<ActionResult> {
         }
         await stopWithPowerShell(candidatePid);
         stopped =
-          (await waitForRuntimeExit(forcedStopTimeoutMs, candidatePids)) ||
+          (await waitForRuntimeExit(activeVariant, forcedStopTimeoutMs, candidatePids)) ||
           (await waitForProcessExit(candidatePid, forcedStopTimeoutMs));
         if (stopped) {
           break;
@@ -680,10 +813,11 @@ async function stopTarget(): Promise<ActionResult> {
       }
     }
     refreshRuntimeSnapshot();
-    pushLocalLog(stopped ? "脚本已关闭" : "脚本关闭请求已发送", "info");
+    const message = stopped ? `${target.variantLabel}已关闭` : `${target.variantLabel}关闭请求已发送`;
+    pushLocalLog(message, "info");
     return {
       ok: true,
-      message: stopped ? "脚本已关闭" : "脚本关闭请求已发送",
+      message,
       state: { ...state },
     };
   } catch (error) {
@@ -709,7 +843,7 @@ function createWindow(): void {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
-    title: "SoloBow",
+    title: "洛克王国脚本",
     backgroundColor: "#ece4d8",
     autoHideMenuBar: true,
     webPreferences: {
@@ -750,6 +884,23 @@ ipcMain.handle("launcher:get-snapshot", async () => ({
   state: refreshRuntimeSnapshot(),
   logs: [...logs],
 }));
+
+ipcMain.handle("launcher:set-variant", async (_event, nextVariant: unknown) => {
+  refreshRuntimeSnapshot();
+  if (!isScriptVariant(nextVariant)) {
+    throw new Error("Unknown script variant.");
+  }
+  if (isLauncherBackendActive(state)) {
+    return {
+      state: { ...state },
+      logs: [...logs],
+    };
+  }
+  return {
+    state: applyIdleSnapshot(resolveTarget(nextVariant), nextVariant),
+    logs: [...logs],
+  };
+});
 
 ipcMain.handle("launcher:start", startTarget);
 ipcMain.handle("launcher:stop", stopTarget);

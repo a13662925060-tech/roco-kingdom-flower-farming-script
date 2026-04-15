@@ -8,7 +8,7 @@ import threading
 import time
 from ctypes import wintypes
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TextIO
 
 from backend.shared.config import (
     MacroConfig,
@@ -118,6 +118,8 @@ user32.GetForegroundWindow.argtypes = ()
 user32.GetForegroundWindow.restype = wintypes.HWND
 user32.IsWindow.argtypes = (wintypes.HWND,)
 user32.IsWindow.restype = wintypes.BOOL
+user32.IsIconic.argtypes = (wintypes.HWND,)
+user32.IsIconic.restype = wintypes.BOOL
 user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
 user32.ShowWindow.restype = wintypes.BOOL
 user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
@@ -462,14 +464,18 @@ def focus_window_by_class(class_name: str) -> bool:
     hwnd = user32.FindWindowW(class_name, None)
     if not hwnd:
         return False
-    user32.ShowWindow(hwnd, 5)
-    return bool(user32.SetForegroundWindow(hwnd))
+    return focus_window_by_hwnd(int(hwnd))
 
 
 def focus_window_by_hwnd(hwnd: int) -> bool:
     if not hwnd or not user32.IsWindow(hwnd):
         return False
-    user32.ShowWindow(hwnd, 5)
+    foreground_hwnd = user32.GetForegroundWindow()
+    if foreground_hwnd == hwnd:
+        return True
+
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)
     return bool(user32.SetForegroundWindow(hwnd))
 
 
@@ -768,6 +774,32 @@ def macro_worker(
         )
 
 
+class RuntimeLogStream(TextIO):
+    def __init__(self, emit_line: Callable[[str], None]) -> None:
+        self._emit_line = emit_line
+        self._buffer = ""
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        if not text:
+            return 0
+
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        self._buffer += normalized
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if line.strip():
+                self._emit_line(line.strip())
+        return len(text)
+
+    def flush(self) -> None:
+        if self._buffer.strip():
+            self._emit_line(self._buffer.strip())
+        self._buffer = ""
+
+
 def run_luoke_macro(
     *,
     script_path: Path,
@@ -867,7 +899,7 @@ def run_luoke_macro(
         *,
         message: Optional[str] = None,
         level: str = "info",
-        print_message: bool = True,
+        print_message: bool = False,
         **changes: Any,
     ) -> None:
         shared_publish_runtime_status(
@@ -882,6 +914,15 @@ def run_luoke_macro(
             print_message=print_message,
             **changes,
         )
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+
+    def emit_runtime_output(level: str, text: str) -> None:
+        publish_status(message=text, level=level, print_message=False)
+
+    sys.stdout = RuntimeLogStream(lambda text: emit_runtime_output("info", text))
+    sys.stderr = RuntimeLogStream(lambda text: emit_runtime_output("error", text))
 
     if not is_admin():
         publish_status(
@@ -1080,6 +1121,16 @@ def run_luoke_macro(
         shutdown_event.set()
         running_event.clear()
     finally:
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
         if hook_ref["handle"]:
             user32.UnhookWindowsHookEx(hook_ref["handle"])
         shutdown_event.set()

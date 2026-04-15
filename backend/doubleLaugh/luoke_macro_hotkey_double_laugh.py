@@ -16,8 +16,8 @@ from backend.shared.luoke_macro import (
 )
 
 
-STATUS_FILE_NAME = "launcher_status_double.json"
-COMMAND_FILE_NAME = "launcher_command_double.json"
+STATUS_FILE_NAME = "launcher_status_double_laugh.json"
+COMMAND_FILE_NAME = "launcher_command_double_laugh.json"
 VK_3 = 0x33
 
 DEFAULT_STEPS = (
