@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "solo": {
+    "action_bar_slot": 2
+  },
+  "double": {
+    "action_bar_slot": 3
+  }
+}

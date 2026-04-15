@@ -15,24 +15,19 @@ env/
 # Local runtime state
 $status
 export_macro_*.emz3
-/*.emz3
-/*.zip
 
 # Packaged app outputs
 SoloBow.exe
 SoloBowV*.spec
 build/
 *.exe
-/sc0415/
 
 # Launcher build outputs
 launcher/node_modules/
 launcher/dist/
 launcher/release/
 launcher/build_backend/
-launcher/build_backend_double/
 launcher/artifacts/backend/
-launcher/LuokeMacroHotkeyDouble.spec
 
 # Keep build notes in the repo
 !launcher/artifacts/README.md
