@@ -1,0 +1,4 @@
+interface:
+  display_name: "Luoke Script Handoff"
+  short_description: "Onboard to launcher, variants, and packaging."
+  default_prompt: "Use $luoke-script-handoff to understand this repository before changing or handing off the launcher, backend, or packaging flow."
