@@ -1,4 +1,5 @@
-<img width="1084" height="670" alt="脚本启动窗口" src="https://github.com/user-attachments/assets/0fc8872f-bb50-4e3a-a7ba-a46c6d36d8e2" />
+<img width="864" height="531" alt="image" src="https://github.com/user-attachments/assets/2c290b54-6329-4d20-b1a1-4749facf664b" />
+
 
 ## 📋 功能说明
 
